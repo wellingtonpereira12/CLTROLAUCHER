@@ -7,6 +7,29 @@ const { execFile, exec } = require('child_process'); // IMPORTAÇÃO ADICIONADA 
 
 const PATCH_LIST_URL = 'http://31.97.28.102/patch/patchlist.json';
 
+// Adicione no topo do main.js
+const sudo = require('sudo-prompt');
+
+// Substitua a função executarComoAdmin por esta versão melhorada
+function executarComoAdmin(caminhoExe, callback) {
+  const options = {
+    name: 'Ragnarok Launcher',
+    icns: '/path/to/icon.icns' // (opcional, apenas macOS)
+  };
+
+  sudo.exec(`"${caminhoExe}"`, options, (error, stdout, stderr) => {
+    if (error) {
+      callback(error);
+    } else {
+      callback(null);
+    }
+  });
+}
+
+function sanitizePath(path) {
+  return path.replace(/[<>:"|?*]/g, '_');
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1200,
@@ -70,12 +93,12 @@ ipcMain.on('iniciar-patch', async (event) => {
     const res = await axios.get(PATCH_LIST_URL);
     const arquivos = res.data;
 
-    const pastaExe = path.dirname(process.execPath); 
+    const pastaExe = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath);
 
     let executavelParaRodar = null;
 
     for (const arquivo of arquivos) {
-      const destino = path.join(pastaExe, arquivo.arquivo);
+      const destino = path.join(pastaExe, sanitizePath(arquivo.arquivo));
       let md5Atual = null;
 
       if (fs.existsSync(destino)) {
@@ -120,10 +143,15 @@ ipcMain.on('iniciar-patch', async (event) => {
 });
 
 function executarComoAdmin(caminhoExe, callback) {
-  const comando = `powershell -Command Start-Process -FilePath '${caminhoExe}' -Verb runAs`;
-
+  const pastaJogo = path.dirname(caminhoExe);
+  
+  // Comando PowerShell corrigido
+  const comando = `powershell -Command "$process = Start-Process -FilePath '${caminhoExe}' -WorkingDirectory '${pastaJogo}' -Verb runAs -PassThru; $process.WaitForExit();"`;
+  
   exec(comando, (error, stdout, stderr) => {
     if (error) {
+      console.error(`Erro ao executar: ${error.message}`);
+      console.error(`Stderr: ${stderr}`);
       callback(error);
     } else {
       callback(null);
@@ -131,18 +159,17 @@ function executarComoAdmin(caminhoExe, callback) {
   });
 }
 
+const { shell } = require('electron');
 
-ipcMain.on('abrir-configuracoes', (event) => {
-  const setupPath = path.join(process.cwd(), 'Setup.exe');
+ipcMain.on('abrir-configuracoes', async (event) => {
+  const pastaExe = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(process.execPath);
+  const setupPath = path.join(pastaExe, 'Setup.exe');
 
-  execFile(setupPath, (error, stdout, stderr) => {
-    if (error) {
-      console.error(`Erro ao abrir Setup.exe: ${error.message}`);
-      return;
-    }
-    console.log(`Saída: ${stdout}`);
-    if (stderr) {
-      console.error(`Erro padrão: ${stderr}`);
-    }
-  });
+  try {
+    await shell.openPath(setupPath);
+    event.reply('sucesso', 'Configurações abertas com sucesso');
+  } catch (error) {
+    console.error(`Erro ao abrir Setup.exe: ${error.message}`);
+    event.reply('erro', `Falha ao abrir configurações: ${error.message}`);
+  }
 });
